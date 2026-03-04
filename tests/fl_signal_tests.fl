@@ -23,6 +23,7 @@
 ============================================================================ */
 
 use crate::zkp::*;
+use crate::crypto::*;
 
 // ============================================================================
 // 테스트 결과 구조체
@@ -222,6 +223,168 @@ pub fn test_a6_batch_proof_generation() -> TestResult {
 }
 
 // ============================================================================
+// Group B: Crypto Engine (AES-256-GCM, SHA-3, HKDF)
+// ============================================================================
+
+pub fn test_b1_sha3_hash() -> TestResult {
+    let mut result = TestResult::new('B', 1, "SHA-3-256 Hash");
+
+    let start_time = get_time_us();
+
+    // B1: SHA-3-256 해싱
+    let data = b"test_message";
+    let hash = sha3_256(data);
+
+    // 해시가 32바이트인지 확인
+    if hash.len() == 32 {
+        result.passed = true;
+    } else {
+        result.error_msg = "Hash length incorrect".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_b2_hkdf_key_derivation() -> TestResult {
+    let mut result = TestResult::new('B', 2, "HKDF Key Derivation");
+
+    let start_time = get_time_us();
+
+    // B2: HKDF-SHA-256 키 유도
+    let salt = b"test_salt";
+    let ikm = b"input_key_material";
+    let info = b"application_info";
+
+    let derived_key = hkdf_derive_key(salt, ikm, info, 32);
+
+    // 파생 키가 32바이트인지 확인
+    if derived_key.len() == 32 {
+        result.passed = true;
+    } else {
+        result.error_msg = "Derived key length incorrect".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_b3_aes_gcm_encryption() -> TestResult {
+    let mut result = TestResult::new('B', 3, "AES-256-GCM Encryption");
+
+    let start_time = get_time_us();
+
+    // B3: AES-256-GCM 암호화 < 100µs (규칙 2)
+    let key = [42u8; 32];
+    let nonce = [99u8; 12];
+    let plaintext = b"secret_message";
+
+    let mut ctx = AesGcmContext::new(&key, &nonce);
+    let ciphertext = encrypt(&mut ctx, plaintext);
+
+    // 암호문이 평문과 같은 길이인지 확인
+    if ciphertext.len() == plaintext.len() {
+        result.passed = true;
+    } else {
+        result.error_msg = "Ciphertext length mismatch".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+
+    // 규칙 2: AES-256 암호화 < 100µs
+    if result.elapsed_us > 100 {
+        result.passed = false;
+        result.error_msg = format!("Rule 2 violated: {}µs > 100µs", result.elapsed_us);
+    }
+
+    result
+}
+
+pub fn test_b4_aes_gcm_decryption() -> TestResult {
+    let mut result = TestResult::new('B', 4, "AES-256-GCM Decryption");
+
+    let start_time = get_time_us();
+
+    // B4: AES-256-GCM 복호화
+    let key = [123u8; 32];
+    let nonce = [77u8; 12];
+    let plaintext = b"decryption_test";
+
+    let mut ctx_enc = AesGcmContext::new(&key, &nonce);
+    let ciphertext = encrypt(&mut ctx_enc, plaintext);
+    let auth_tag = ctx_enc.tag;
+
+    let mut ctx_dec = AesGcmContext::new(&key, &nonce);
+    ctx_dec.tag = auth_tag;
+
+    if let Some(decrypted) = decrypt(&mut ctx_dec, &ciphertext) {
+        if decrypted.len() == plaintext.len() {
+            result.passed = true;
+        } else {
+            result.error_msg = "Decrypted length mismatch".to_string();
+        }
+    } else {
+        result.error_msg = "Decryption failed or authentication failed".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_b5_hmac_sha256() -> TestResult {
+    let mut result = TestResult::new('B', 5, "HMAC-SHA-256");
+
+    let start_time = get_time_us();
+
+    // B5: HMAC-SHA-256 생성
+    let key = b"secret_key";
+    let message = b"message_to_authenticate";
+
+    let hmac = hmac_sha256(key, message);
+
+    // HMAC이 32바이트인지 확인
+    if hmac.len() == 32 {
+        result.passed = true;
+    } else {
+        result.error_msg = "HMAC length incorrect".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_b6_auth_tag_tampering_detection() -> TestResult {
+    let mut result = TestResult::new('B', 6, "Auth Tag Tampering Detection");
+
+    let start_time = get_time_us();
+
+    // B6: 인증 태그 위변조 탐지
+    let key = [88u8; 32];
+    let nonce = [55u8; 12];
+    let plaintext = b"protected_data";
+
+    let mut ctx_enc = AesGcmContext::new(&key, &nonce);
+    let ciphertext = encrypt(&mut ctx_enc, plaintext);
+    let mut auth_tag = ctx_enc.tag;
+
+    // 태그 위조 (1바이트 변경)
+    auth_tag[0] = auth_tag[0].wrapping_add(1);
+
+    let mut ctx_dec = AesGcmContext::new(&key, &nonce);
+    ctx_dec.tag = auth_tag;
+
+    // 위조된 태그는 복호화 실패해야 함
+    if decrypt(&mut ctx_dec, &ciphertext).is_none() {
+        result.passed = true;
+    } else {
+        result.error_msg = "Tampered tag was not detected!".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+// ============================================================================
 // 전체 테스트 실행
 // ============================================================================
 
@@ -236,7 +399,15 @@ pub fn run_all_tests() -> Vec<TestResult> {
     results.push(test_a5_forged_proof_rejection());
     results.push(test_a6_batch_proof_generation());
 
-    // Group B-H: (Day 3-8에서 추가)
+    // Group B: Crypto Engine
+    results.push(test_b1_sha3_hash());
+    results.push(test_b2_hkdf_key_derivation());
+    results.push(test_b3_aes_gcm_encryption());
+    results.push(test_b4_aes_gcm_decryption());
+    results.push(test_b5_hmac_sha256());
+    results.push(test_b6_auth_tag_tampering_detection());
+
+    // Group C-H: (Day 5-8에서 추가)
 
     results
 }
