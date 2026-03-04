@@ -12,7 +12,7 @@
 
 pub mod zkp;
 pub mod crypto;
-// pub mod transport;   // Day 5-6
+pub mod transport;
 // pub mod security;    // Day 7-8
 
 pub use zkp::{
@@ -43,6 +43,25 @@ pub use crypto::{
     HkdfContext,
     KdfContext,
     KdfAlgorithm,
+};
+
+pub use transport::{
+    ChannelState,
+    SignalChannel,
+    HandshakeMessage,
+    SignalMessage,
+    ChannelStats,
+    initiate_handshake,
+    complete_handshake,
+    handshake_complete,
+    send_message,
+    receive_message,
+    throughput_mps,
+    throughput_mbps,
+    SignalEvent,
+    ZeroCopyRingBuffer,
+    SignalBus,
+    BusStats,
 };
 
 // ============================================================================

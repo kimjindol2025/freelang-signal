@@ -24,6 +24,7 @@
 
 use crate::zkp::*;
 use crate::crypto::*;
+use crate::transport::*;
 
 // ============================================================================
 // 테스트 결과 구조체
@@ -385,6 +386,197 @@ pub fn test_b6_auth_tag_tampering_detection() -> TestResult {
 }
 
 // ============================================================================
+// Group C: Transport Layer (P2P Channel, Zero-Copy Bus)
+// ============================================================================
+
+pub fn test_c1_channel_handshake() -> TestResult {
+    let mut result = TestResult::new('C', 1, "Channel Handshake");
+
+    let start_time = get_time_us();
+
+    // C1: 채널 핸드셰이크 < 5ms (5000µs)
+    let local_key = [11u8; 32];
+    let mut channel = SignalChannel::new(1, &local_key);
+
+    // Handshake 시작
+    let hs_msg = initiate_handshake(&mut channel);
+
+    // Handshake 완료
+    let remote_key = [22u8; 32];
+    let remote_nonce = [33u8; 16];
+
+    if complete_handshake(&mut channel, &remote_key, &remote_nonce) {
+        result.passed = true;
+    } else {
+        result.error_msg = "Handshake failed".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+
+    // 규칙 3: 핸드셰이크 < 5ms (5000µs)
+    if result.elapsed_us > 5000 {
+        result.passed = false;
+        result.error_msg = format!("Rule 3 violated: {}µs > 5000µs", result.elapsed_us);
+    }
+
+    result
+}
+
+pub fn test_c2_message_send_receive() -> TestResult {
+    let mut result = TestResult::new('C', 2, "Message Send/Receive");
+
+    let start_time = get_time_us();
+
+    // C2: 메시지 송수신
+    let local_key = [44u8; 32];
+    let mut channel = SignalChannel::new(2, &local_key);
+
+    // 채널 활성화
+    channel.state = ChannelState::Active;
+
+    let payload = b"test_message";
+    if let Some(msg) = send_message(&mut channel, payload) {
+        if let Some(received) = receive_message(&mut channel, &msg) {
+            if received.len() == payload.len() {
+                result.passed = true;
+            } else {
+                result.error_msg = "Received payload length mismatch".to_string();
+            }
+        } else {
+            result.error_msg = "Receive failed".to_string();
+        }
+    } else {
+        result.error_msg = "Send failed".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_c3_channel_throughput() -> TestResult {
+    let mut result = TestResult::new('C', 3, "Channel Throughput");
+
+    let start_time = get_time_us();
+
+    // C3: 처리량 > 10K msg/s
+    let local_key = [55u8; 32];
+    let mut channel = SignalChannel::new(3, &local_key);
+    channel.state = ChannelState::Active;
+
+    // 100개 메시지 송신
+    for i in 0..100 {
+        let payload = format!("msg_{}", i).as_bytes().to_vec();
+        let _ = send_message(&mut channel, &payload[..]);
+    }
+
+    let mps = throughput_mps(&channel);
+
+    // 규칙 6: 처리량 > 10,000 msg/s
+    if mps > 10000 {
+        result.passed = true;
+    } else {
+        result.error_msg = format!("Throughput {} < 10K", mps);
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_c4_zero_copy_bus_push_pop() -> TestResult {
+    let mut result = TestResult::new('C', 4, "Zero-Copy Bus Push/Pop");
+
+    let start_time = get_time_us();
+
+    // C4: 무복사 버스 push/pop
+    let mut bus = SignalBus::new(4096, 64);
+
+    let zkp_hash = [77u8; 32];
+    let event = SignalEvent::new(1, 1, b"test_event", &zkp_hash);
+
+    if bus.push_signal(event.clone()) {
+        if let Some(popped) = bus.pop_signal() {
+            if popped.sequence == 1 {
+                result.passed = true;
+            } else {
+                result.error_msg = "Popped event sequence mismatch".to_string();
+            }
+        } else {
+            result.error_msg = "Pop failed".to_string();
+        }
+    } else {
+        result.error_msg = "Push failed".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_c5_bus_capacity_overflow() -> TestResult {
+    let mut result = TestResult::new('C', 5, "Bus Capacity Overflow");
+
+    let start_time = get_time_us();
+
+    // C5: 버스 오버플로우 처리
+    let mut bus = SignalBus::new(10, 2);  // 작은 버퍼 (10개)
+
+    let zkp_hash = [88u8; 32];
+
+    // 100개 이벤트 삽입 시도 (오버플로우)
+    for i in 0..100 {
+        let event = SignalEvent::new(1, i, b"data", &zkp_hash);
+        bus.push_signal(event);
+    }
+
+    // 드롭된 이벤트 확인
+    let stats = bus.bus_stats();
+
+    if stats.dropped_events > 0 {
+        result.passed = true;
+    } else {
+        result.error_msg = "No dropped events detected".to_string();
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+pub fn test_c6_bus_batch_processing() -> TestResult {
+    let mut result = TestResult::new('C', 6, "Bus Batch Processing");
+
+    let start_time = get_time_us();
+
+    // C6: 배치 처리
+    let mut bus = SignalBus::new(4096, 64);
+
+    let zkp_hash = [99u8; 32];
+
+    // 200개 이벤트 푸시
+    for i in 0..200 {
+        let event = SignalEvent::new(1, i, b"batch_data", &zkp_hash);
+        bus.push_signal(event);
+    }
+
+    // 배치 처리 (64개씩)
+    let mut total_processed = 0;
+    loop {
+        let batch = bus.process_batch();
+        if batch.is_empty() {
+            break;
+        }
+        total_processed += batch.len();
+    }
+
+    if total_processed == 200 {
+        result.passed = true;
+    } else {
+        result.error_msg = format!("Processed {} != 200", total_processed);
+    }
+
+    result.elapsed_us = get_time_us() - start_time;
+    result
+}
+
+// ============================================================================
 // 전체 테스트 실행
 // ============================================================================
 
@@ -407,7 +599,15 @@ pub fn run_all_tests() -> Vec<TestResult> {
     results.push(test_b5_hmac_sha256());
     results.push(test_b6_auth_tag_tampering_detection());
 
-    // Group C-H: (Day 5-8에서 추가)
+    // Group C: Transport Layer
+    results.push(test_c1_channel_handshake());
+    results.push(test_c2_message_send_receive());
+    results.push(test_c3_channel_throughput());
+    results.push(test_c4_zero_copy_bus_push_pop());
+    results.push(test_c5_bus_capacity_overflow());
+    results.push(test_c6_bus_batch_processing());
+
+    // Group D-H: (Day 7-8에서 추가)
 
     results
 }
